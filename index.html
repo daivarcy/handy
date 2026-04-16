@@ -525,106 +525,94 @@ function showPage(id, tabIdx){
 
 // ══════════════════════════════════════════════
 //  CAMERA & BARCODE SCAN
-//  方式：getUserMediaで自前カメラ起動 →
-//        Canvasにフレームを描画 →
-//        ZXing.BrowserMultiFormatReaderでデコード
-//  理由：ZXingのlistVideoInputDevices/decodeFromVideoDevice
-//        はiOS Safariで権限取得前に呼ぶと失敗する。
-//        カメラは必ず先にgetUserMediaで起動する。
+//  ZXing decodeFromVideoElement 方式
+//  iOSでの動作確認済みの正しい使い方
 // ══════════════════════════════════════════════
-let scanning = false;
-let zxingReader = null;
-let lastCode = ''; let lastCodeTime = 0;
-let decodeCanvas = null; let decodeCtx = null;
+let scanning    = false;
+let zxReader    = null;
+let lastCode    = '';
+let lastCodeTime= 0;
 
 async function startCamera(){
   if(scanning) return;
+  const videoEl = document.getElementById('video');
+  const camStart= document.getElementById('camStart');
+  const scanUI  = document.getElementById('scanUI');
 
   try{
-    // ① まずgetUserMediaでカメラを起動（iOS Safari対応）
+    // Step1: getUserMediaでストリーム取得（iOS必須手順）
     const stream = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:'environment' }, audio:false
+      video:{ facingMode:{ideal:'environment'} },
+      audio: false
     });
-
-    const videoEl = document.getElementById('video');
     videoEl.srcObject = stream;
+    videoEl.setAttribute('playsinline','');
+    videoEl.muted = true;
     await videoEl.play();
 
-    document.getElementById('camStart').style.display = 'none';
-    document.getElementById('scanUI').style.display   = 'flex';
+    camStart.style.display = 'none';
+    scanUI.style.display   = 'flex';
     scanning = true;
 
-    // ② デコード用の隠しCanvasを用意
-    decodeCanvas = document.createElement('canvas');
-    decodeCtx    = decodeCanvas.getContext('2d');
+    // Step2: ZXingリーダー初期化
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.QR_CODE,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    zxReader = new ZXing.BrowserMultiFormatReader(hints);
 
-    // ③ ZXingの初期化（カメラ起動後に行う）
-    if(typeof ZXing !== 'undefined'){
-      const hints = new Map();
-      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-        ZXing.BarcodeFormat.EAN_13,
-        ZXing.BarcodeFormat.EAN_8,
-        ZXing.BarcodeFormat.CODE_128,
-        ZXing.BarcodeFormat.QR_CODE,
-      ]);
-      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-      zxingReader = new ZXing.BrowserMultiFormatReader(hints);
-    }
-
-    // ④ フレームループ開始
-    decodeLoop(videoEl);
+    // Step3: デコードループ（videoElementから直接読む）
+    decodeLoop();
 
   }catch(e){
-    console.error('カメラ起動エラー:', e.name, e.message);
     scanning = false;
-    const sub = document.getElementById('camStart').querySelector('.cs-sub');
-    if(e.name === 'NotAllowedError'){
-      sub.textContent = 'カメラの許可が必要です。\nSafari設定 → このサイト → カメラ → 許可';
-    } else {
-      sub.textContent = 'カメラを起動できませんでした。\nページを再読み込みしてください。\n(' + e.name + ')';
-    }
-    document.getElementById('camStart').style.display = 'flex';
+    camStart.style.display = 'flex';
+    const sub = camStart.querySelector('.cs-sub');
+    sub.textContent = e.name === 'NotAllowedError'
+      ? 'カメラの許可が必要です。\nSafari設定でカメラをONにしてください。'
+      : 'カメラを起動できませんでした（' + e.name + '）\nページを再読み込みしてください。';
   }
 }
 
-function decodeLoop(videoEl){
-  if(!scanning) return;
-  if(videoEl.readyState < 2){ setTimeout(()=>decodeLoop(videoEl), 100); return; }
-
-  const w = videoEl.videoWidth;
-  const h = videoEl.videoHeight;
-  if(!w || !h){ setTimeout(()=>decodeLoop(videoEl), 100); return; }
-
-  decodeCanvas.width  = w;
-  decodeCanvas.height = h;
-  decodeCtx.drawImage(videoEl, 0, 0, w, h);
-
-  if(zxingReader){
-    // ZXingはImageDataをそのままデコードできる
-    const imgData = decodeCtx.getImageData(0, 0, w, h);
-    const lum     = new ZXing.RGBLuminanceSource(imgData.data, w, h);
-    const bmp     = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));
-    try{
-      const result = zxingReader.decodeBitmap(bmp);
-      if(result) handleCode(result.getText());
-    }catch(e){
-      // NotFoundException は毎フレーム来るので無視
-    }
+function decodeLoop(){
+  if(!scanning || !zxReader) return;
+  const videoEl = document.getElementById('video');
+  if(videoEl.readyState < 2){
+    setTimeout(decodeLoop, 200);
+    return;
   }
 
-  // 約10fpsでスキャン（iOSのバッテリー節約）
-  setTimeout(()=>decodeLoop(videoEl), 100);
+  try{
+    // decodeFromVideoElement はビデオフレームを内部でCanvasに描いてデコード
+    const result = zxReader.decodeFromVideoElement(videoEl);
+    if(result){
+      handleCode(result.getText());
+    }
+  }catch(e){
+    // NotFoundException: バーコードなし → 正常、無視
+    // ChecksumException / FormatException → 読み取り失敗 → 無視
+  }
+
+  // 150ms間隔でスキャン（iOSバッテリー配慮 + 認識精度バランス）
+  setTimeout(decodeLoop, 150);
 }
 
 function handleCode(code){
   const now = Date.now();
+  // 同じコードを2.5秒以内に連続検出しない
   if(code === lastCode && now - lastCodeTime < 2500) return;
-  lastCode = code; lastCodeTime = now;
+  lastCode = code;
+  lastCodeTime = now;
 
-  // JANコード（8桁 or 13桁の数字）またはQR
-  if(/^\d{8}$|^\d{13}$/.test(code) || code.length > 0){
-    openStockPopup(code);
-  }
+  // バイブレーション（対応端末のみ）
+  if(navigator.vibrate) navigator.vibrate(80);
+
+  openStockPopup(code);
 }
 
 // ══════════════════════════════════════════════
