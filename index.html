@@ -30,12 +30,21 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
    PAGE 0: SCAN
 ════════════════════════════════ */
 #pageScan{background:#000}
-#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
-#scanCanvas{position:absolute;opacity:0;pointer-events:none;z-index:1}
+
+/* videoはbody直下固定。pageScanのdisplay切替に影響されない */
+#video{
+  position:fixed;
+  top:0;left:0;width:100%;height:100%;
+  object-fit:cover;
+  z-index:0;
+  display:none; /* JS側でdisplay:blockに切り替え */
+  background:#000;
+}
+#scanCanvas{position:fixed;top:0;left:0;opacity:0;pointer-events:none;z-index:1}
 
 /* カメラ起動前 */
 #camStart{
-  position:absolute;inset:0;z-index:20;
+  position:fixed;inset:0;z-index:20;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:16px;background:var(--bg);padding:32px;text-align:center;
 }
@@ -47,7 +56,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 .btn-cs:active{opacity:.85;transform:scale(.98)}
 
 /* スキャンUI */
-#scanUI{position:absolute;inset:0;z-index:10;display:none;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+#scanUI{position:fixed;inset:0;z-index:10;display:none;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
 .scan-frame{width:280px;height:160px;position:relative}
 .sc{position:absolute;width:28px;height:28px}
 .sc.tl{top:0;left:0;border-top:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:4px 0 0 0}
@@ -62,7 +71,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 
 /* 最終スキャン情報 */
 #lastScanBar{
-  position:absolute;bottom:0;left:0;right:0;z-index:15;
+  position:fixed;bottom:0;left:0;right:0;z-index:15;
   background:rgba(13,17,23,.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
   border-top:1px solid var(--border);
   padding:10px 16px calc(env(safe-area-inset-bottom,0)+10px);
@@ -279,12 +288,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   <div class="tab" id="tab2" onclick="showPage('pageMaster',2)">📦 商品マスタ</div>
 </div>
 
+<!-- videoはpageScanの外・body直下に配置（iOS描画バグ回避） -->
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="scanCanvas"></canvas>
+
 <!-- ════════════════════════════════
      PAGE 0: SCAN
 ════════════════════════════════ -->
 <div class="page show" id="pageScan">
-  <video id="video" autoplay playsinline muted></video>
-  <canvas id="scanCanvas"></canvas>
 
   <div id="camStart">
     <div class="cs-icon">📱</div>
@@ -518,9 +529,22 @@ function showPage(id, tabIdx){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById(id).classList.add('show');
   document.getElementById('tab'+tabIdx).classList.add('active');
+
+  // スキャンタブ以外ではvideoとscanUIを隠す
+  const video   = document.getElementById('video');
+  const scanUI  = document.getElementById('scanUI');
+  const lastBar = document.getElementById('lastScanBar');
+  if(id === 'pageScan'){
+    video.style.display = 'block';
+    if(scanning) scanUI.style.display = 'flex';
+    if(!scanning) startCamera();
+  } else {
+    video.style.display = 'none';
+    scanUI.style.display = 'none';
+  }
+
   if(id==='pageList')   renderInventory();
   if(id==='pageMaster') renderMaster();
-  if(id==='pageScan' && !scanning) startCamera();
 }
 
 // ══════════════════════════════════════════════
@@ -547,7 +571,9 @@ async function startCamera(){
     });
     videoEl.srcObject = stream;
     videoEl.setAttribute('playsinline','');
+    videoEl.setAttribute('webkit-playsinline','');
     videoEl.muted = true;
+    videoEl.style.display = 'block'; // ← iOS描画のため明示的にblock
     await videoEl.play();
 
     camStart.style.display = 'none';
