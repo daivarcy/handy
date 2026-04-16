@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d1117">
+<title>ハンディ棚卸</title>
+<style>
+:root{
+  --bg:#0d1117;--surf:#161b22;--surf2:#21262d;--surf3:#30363d;
+  --accent:#f78166;--accent2:#da3633;
+  --green:#3fb950;--blue:#58a6ff;--yellow:#e3b341;--purple:#bc8cff;
+  --text:#e6edf3;--dim:#8b949e;--border:#30363d;--r:12px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,'Hiragino Sans',sans-serif;overflow:hidden}
+
+/* ══ TABS ══ */
+.tabs{display:flex;background:var(--surf);border-bottom:1px solid var(--border);position:fixed;top:0;left:0;right:0;z-index:50;padding-top:env(safe-area-inset-top,0)}
+.tab{flex:1;padding:13px 2px;text-align:center;font-size:11px;font-weight:700;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;letter-spacing:.01em}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ══ PAGES ══ */
+.page{position:fixed;inset:0;padding-top:calc(env(safe-area-inset-top,0) + 48px);padding-bottom:env(safe-area-inset-bottom,0);display:none;flex-direction:column;overflow:hidden}
+.page.show{display:flex}
+
+/* ════════════════════════════════
+   PAGE 0: SCAN
+════════════════════════════════ */
+#pageScan{background:#000}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+#scanCanvas{position:absolute;opacity:0;pointer-events:none;z-index:1}
+
+/* カメラ起動前 */
+#camStart{
+  position:absolute;inset:0;z-index:20;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;background:var(--bg);padding:32px;text-align:center;
+}
+.cs-icon{font-size:72px;animation:float 2.5s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.cs-title{font-size:20px;font-weight:800}
+.cs-sub{font-size:13px;color:var(--dim);line-height:1.7;max-width:260px}
+.btn-cs{background:var(--accent);border:none;border-radius:var(--r);padding:16px 36px;color:#fff;font-size:16px;font-weight:800;font-family:inherit;cursor:pointer;box-shadow:0 4px 20px rgba(247,129,102,.4)}
+.btn-cs:active{opacity:.85;transform:scale(.98)}
+
+/* スキャンUI */
+#scanUI{position:absolute;inset:0;z-index:10;display:none;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.scan-frame{width:280px;height:160px;position:relative}
+.sc{position:absolute;width:28px;height:28px}
+.sc.tl{top:0;left:0;border-top:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:4px 0 0 0}
+.sc.tr{top:0;right:0;border-top:3px solid var(--accent);border-right:3px solid var(--accent);border-radius:0 4px 0 0}
+.sc.bl{bottom:0;left:0;border-bottom:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:0 0 0 4px}
+.sc.br{bottom:0;right:0;border-bottom:3px solid var(--accent);border-right:3px solid var(--accent);border-radius:0 0 4px 0}
+.sl{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);box-shadow:0 0 8px var(--accent);animation:sa 1.8s ease-in-out infinite}
+@keyframes sa{0%{top:0}100%{top:calc(100% - 2px)}}
+.scan-hint-top{position:absolute;top:0;left:0;right:0;padding:56px 20px 0;text-align:center;background:linear-gradient(to bottom,rgba(0,0,0,.65),transparent)}
+.scan-hint-txt{font-size:13px;color:rgba(255,255,255,.8);line-height:1.6}
+.scan-hint-txt strong{color:var(--accent)}
+
+/* 最終スキャン情報 */
+#lastScanBar{
+  position:absolute;bottom:0;left:0;right:0;z-index:15;
+  background:rgba(13,17,23,.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-top:1px solid var(--border);
+  padding:10px 16px calc(env(safe-area-inset-bottom,0)+10px);
+  display:none;flex-direction:row;align-items:center;gap:12px;
+  pointer-events:auto;
+}
+.lsb-jan{font-family:monospace;font-size:12px;color:var(--dim)}
+.lsb-name{font-size:14px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn-lsb{background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--accent);font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0}
+
+/* ════════════════════════════════
+   STOCK POPUP（棚卸入力）
+════════════════════════════════ */
+#stockPopup{
+  position:fixed;inset:0;z-index:200;
+  display:none;flex-direction:column;
+  background:var(--bg);
+  padding-top:env(safe-area-inset-top,0);
+  animation:slideUp .3s cubic-bezier(.34,1.2,.64,1);
+}
+@keyframes slideUp{0%{transform:translateY(100%)}100%{transform:translateY(0)}}
+
+/* 商品ヘッダー */
+.sp-header{
+  display:flex;align-items:center;gap:0;
+  background:var(--surf);border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.sp-img-wrap{width:90px;height:90px;flex-shrink:0;overflow:hidden;background:var(--surf2)}
+.sp-img{width:100%;height:100%;object-fit:cover}
+.sp-no-img{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:36px}
+.sp-info{flex:1;min-width:0;padding:12px 12px 12px 14px}
+.sp-jan{font-family:monospace;font-size:10px;color:var(--dim);margin-bottom:3px}
+.sp-name{font-size:16px;font-weight:800;line-height:1.3;margin-bottom:6px}
+.sp-prices{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sp-price{font-size:22px;font-weight:900;color:var(--accent)}
+.sp-price-label{font-size:10px;color:var(--dim)}
+.sp-sale-wrap{display:flex;align-items:baseline;gap:4px}
+.sp-sale-price{font-size:18px;font-weight:800;color:var(--yellow)}
+.sp-sale-label{font-size:10px;color:var(--yellow);background:rgba(227,179,65,.15);border:1px solid rgba(227,179,65,.3);border-radius:4px;padding:1px 5px}
+.btn-sp-close{background:none;border:none;color:var(--dim);font-size:24px;padding:16px 16px 16px 8px;cursor:pointer;flex-shrink:0;align-self:flex-start;margin-top:4px}
+
+/* 入力エリア */
+.sp-body{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+
+/* 数量入力カード */
+.qty-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px}
+.qty-card-label{font-size:10px;color:var(--dim);letter-spacing:.08em;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.qty-card-label-icon{font-size:14px}
+.qty-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.qty-sub{font-size:11px;color:var(--dim);flex:1}
+.qty-ctrl{display:flex;align-items:center;gap:0;background:var(--surf2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.btn-qty{
+  width:44px;height:44px;border:none;background:none;
+  color:var(--text);font-size:22px;font-weight:300;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .15s;flex-shrink:0;
+}
+.btn-qty:active{background:rgba(255,255,255,.1)}
+.qty-val{
+  min-width:56px;text-align:center;font-size:20px;font-weight:800;
+  font-family:monospace;color:var(--text);padding:0 4px;
+  cursor:text;
+}
+.qty-val:focus{outline:none;color:var(--accent)}
+
+/* 発注カード（納期付き） */
+.order-date-row{margin-top:10px;display:flex;align-items:center;gap:8px}
+.order-date-label{font-size:11px;color:var(--dim)}
+.order-date-input{
+  background:var(--surf2);border:1px solid var(--border);border-radius:8px;
+  padding:7px 10px;color:var(--text);font-size:13px;font-family:inherit;
+  outline:none;flex:1;-webkit-appearance:none;
+}
+.order-date-input:focus{border-color:var(--blue)}
+
+/* 保存ボタン */
+.sp-footer{flex-shrink:0;padding:12px 14px calc(env(safe-area-inset-bottom,0)+12px);background:var(--surf);border-top:1px solid var(--border)}
+.btn-save-stock{
+  width:100%;background:linear-gradient(135deg,#1f6feb,var(--blue));
+  border:none;border-radius:var(--r);padding:16px;color:#fff;
+  font-size:16px;font-weight:800;font-family:inherit;cursor:pointer;
+  box-shadow:0 4px 20px rgba(88,166,255,.3);
+}
+.btn-save-stock:active{opacity:.88;transform:scale(.99)}
+
+/* ════════════════════════════════
+   PAGE 1: 棚卸一覧
+════════════════════════════════ */
+#pageList{background:var(--bg);overflow-y:auto}
+.list-header{padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surf);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:8px}
+.list-title{font-size:15px;font-weight:800}
+.list-count{font-size:11px;color:var(--dim);margin-top:1px}
+.btn-csv{background:rgba(63,185,80,.15);border:1px solid rgba(63,185,80,.3);border-radius:8px;padding:8px 14px;color:var(--green);font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
+.btn-csv:active{background:rgba(63,185,80,.25)}
+.btn-clear-all{background:rgba(218,54,51,.1);border:1px solid rgba(218,54,51,.2);border-radius:8px;padding:8px 10px;color:var(--accent2);font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
+
+.inv-list{padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1}
+.inv-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.inv-card-top{display:flex;align-items:center;gap:12px;padding:10px 12px}
+.inv-thumb{width:52px;height:52px;flex-shrink:0;border-radius:8px;overflow:hidden;background:var(--surf2);display:flex;align-items:center;justify-content:center;font-size:22px}
+.inv-thumb img{width:100%;height:100%;object-fit:cover}
+.inv-info{flex:1;min-width:0}
+.inv-name{font-size:13px;font-weight:700;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inv-jan{font-size:10px;color:var(--dim);font-family:monospace}
+.inv-time{font-size:10px;color:var(--dim);margin-top:1px}
+.btn-inv-edit{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--blue);font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0}
+.inv-nums{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--border)}
+.inv-num-cell{padding:8px 4px;text-align:center;border-right:1px solid var(--border)}
+.inv-num-cell:last-child{border-right:none}
+.inv-num-label{font-size:9px;color:var(--dim);margin-bottom:2px}
+.inv-num-val{font-size:16px;font-weight:800;font-family:monospace}
+.inv-num-val.diff-minus{color:var(--accent2)}
+.inv-num-val.diff-plus{color:var(--green)}
+
+.empty-list{text-align:center;padding:60px 20px;color:var(--dim)}
+.empty-list-icon{font-size:48px;margin-bottom:12px}
+.empty-list-txt{font-size:14px;line-height:1.7}
+
+/* ════════════════════════════════
+   PAGE 2: 商品マスタ
+════════════════════════════════ */
+#pageMaster{background:var(--bg);overflow-y:auto}
+.master-header{padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surf);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.master-title{font-size:15px;font-weight:800}
+.master-count{font-size:11px;color:var(--dim);margin-top:1px}
+.btn-master-add{background:var(--accent);border:none;border-radius:8px;padding:9px 16px;color:#fff;font-size:12px;font-weight:800;font-family:inherit;cursor:pointer}
+.master-list{padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1}
+.master-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);display:flex;align-items:center;gap:12px;padding:10px 12px}
+.master-thumb{width:52px;height:52px;flex-shrink:0;border-radius:8px;overflow:hidden;background:var(--surf2);display:flex;align-items:center;justify-content:center;font-size:22px}
+.master-thumb img{width:100%;height:100%;object-fit:cover}
+.master-info{flex:1;min-width:0}
+.master-name{font-size:13px;font-weight:700;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.master-jan{font-size:10px;color:var(--dim);font-family:monospace;margin-bottom:2px}
+.master-prices{display:flex;gap:8px;align-items:center}
+.master-price{font-size:14px;font-weight:800;color:var(--accent)}
+.master-sale{font-size:12px;font-weight:700;color:var(--yellow)}
+.master-btns{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+.btn-m-edit{background:var(--surf2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--blue);font-size:11px;font-weight:700;font-family:inherit;cursor:pointer}
+.btn-m-del{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--dim);font-size:11px;font-family:inherit;cursor:pointer}
+.btn-m-del:active{color:var(--accent2);border-color:var(--accent2)}
+.master-empty{text-align:center;padding:60px 20px;color:var(--dim)}
+.master-empty-icon{font-size:48px;margin-bottom:12px}
+.master-empty-txt{font-size:14px;line-height:1.7}
+
+/* ════════════════════════════════
+   MASTER EDIT MODAL
+════════════════════════════════ */
+#masterModal{
+  position:fixed;inset:0;z-index:300;
+  background:rgba(0,0,0,.85);
+  display:none;align-items:flex-end;
+}
+#masterModal.show{display:flex}
+.mm-sheet{
+  background:var(--surf);border-radius:20px 20px 0 0;border-top:1px solid var(--border);
+  width:100%;max-height:90vh;overflow-y:auto;
+  padding:0 16px calc(env(safe-area-inset-bottom,0)+16px);
+  animation:mmUp .3s cubic-bezier(.34,1.2,.64,1);
+}
+@keyframes mmUp{0%{transform:translateY(100%)}100%{transform:translateY(0)}}
+.mm-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:12px auto 16px}
+.mm-title{font-size:16px;font-weight:800;margin-bottom:16px;text-align:center}
+
+/* 画像アップロード */
+.mm-img-label{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  width:120px;height:120px;border-radius:16px;border:2px dashed var(--border);
+  background:var(--surf2);cursor:pointer;overflow:hidden;position:relative;
+  margin:0 auto 16px;transition:border-color .2s;
+}
+.mm-img-label:active{border-color:var(--accent)}
+.mm-img-file{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;z-index:10}
+.mm-img-preview{width:100%;height:100%;object-fit:cover;position:absolute;inset:0;display:none}
+.mm-img-icon{font-size:36px;position:relative;z-index:1}
+.mm-img-txt{font-size:11px;color:var(--dim);margin-top:4px;position:relative;z-index:1}
+.mm-img-overlay{position:absolute;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;font-size:11px;color:#fff;font-weight:700;z-index:5}
+
+.mm-field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.mm-label{font-size:11px;color:var(--dim);letter-spacing:.06em;font-weight:600}
+.mm-input{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:13px 14px;color:var(--text);font-size:16px;font-family:inherit;outline:none;-webkit-appearance:none;transition:border-color .2s}
+.mm-input:focus{border-color:var(--accent)}
+.mm-input::placeholder{color:var(--surf3)}
+.mm-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.btn-mm-save{width:100%;background:var(--accent);border:none;border-radius:var(--r);padding:16px;color:#fff;font-size:16px;font-weight:800;font-family:inherit;cursor:pointer;margin-bottom:8px}
+.btn-mm-save:active{opacity:.88}
+.btn-mm-cancel{width:100%;background:none;border:1px solid var(--border);border-radius:var(--r);padding:13px;color:var(--dim);font-size:14px;font-family:inherit;cursor:pointer}
+
+/* ── TOAST ── */
+.toast{position:fixed;bottom:calc(env(safe-area-inset-bottom,0)+80px);left:50%;transform:translateX(-50%) translateY(40px);background:var(--surf);border:1px solid var(--green);color:var(--green);padding:9px 18px;border-radius:30px;font-size:13px;font-weight:700;opacity:0;transition:all .3s;z-index:999;white-space:nowrap;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── 未登録商品ポップ ── */
+#unknownPopup{
+  position:fixed;inset:0;z-index:250;
+  background:rgba(0,0,0,.8);
+  display:none;align-items:center;justify-content:center;padding:24px;
+}
+#unknownPopup.show{display:flex}
+.up-card{background:var(--surf);border:1px solid var(--border);border-radius:20px;padding:28px 24px;width:100%;max-width:320px;text-align:center}
+.up-icon{font-size:48px;margin-bottom:12px}
+.up-title{font-size:16px;font-weight:800;margin-bottom:6px}
+.up-jan{font-family:monospace;font-size:13px;color:var(--dim);margin-bottom:16px}
+.btn-up-register{width:100%;background:var(--accent);border:none;border-radius:var(--r);padding:14px;color:#fff;font-size:15px;font-weight:800;font-family:inherit;cursor:pointer;margin-bottom:8px}
+.btn-up-close{width:100%;background:none;border:1px solid var(--border);border-radius:var(--r);padding:12px;color:var(--dim);font-size:14px;font-family:inherit;cursor:pointer}
+</style>
+</head>
+<body>
+
+<!-- TABS -->
+<div class="tabs">
+  <div class="tab active" id="tab0" onclick="showPage('pageScan',0)">📷 スキャン</div>
+  <div class="tab" id="tab1" onclick="showPage('pageList',1)">📋 棚卸一覧</div>
+  <div class="tab" id="tab2" onclick="showPage('pageMaster',2)">📦 商品マスタ</div>
+</div>
+
+<!-- ════════════════════════════════
+     PAGE 0: SCAN
+════════════════════════════════ -->
+<div class="page show" id="pageScan">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="scanCanvas"></canvas>
+
+  <div id="camStart">
+    <div class="cs-icon">📱</div>
+    <div class="cs-title">ハンディ棚卸スキャナー</div>
+    <div class="cs-sub">商品のバーコードをカメラで読み取り<br>在庫数・発注数を素早く入力できます</div>
+    <button class="btn-cs" onclick="startCamera()">カメラを起動する</button>
+  </div>
+
+  <div id="scanUI">
+    <div class="scan-hint-top">
+      <div class="scan-hint-txt">バーコードを枠内に合わせてください<br><strong>JANコード自動認識</strong></div>
+    </div>
+    <div class="scan-frame">
+      <div class="sc tl"></div><div class="sc tr"></div>
+      <div class="sc bl"></div><div class="sc br"></div>
+      <div class="sl"></div>
+    </div>
+  </div>
+
+  <div id="lastScanBar">
+    <div style="flex:1;min-width:0">
+      <div class="lsb-jan" id="lsbJan">―</div>
+      <div class="lsb-name" id="lsbName">―</div>
+    </div>
+    <button class="btn-lsb" onclick="reopenLastScan()">再入力</button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════
+     STOCK POPUP（棚卸入力）
+════════════════════════════════ -->
+<div id="stockPopup">
+  <!-- 商品ヘッダー -->
+  <div class="sp-header">
+    <div class="sp-img-wrap">
+      <img class="sp-img" id="spImg" src="" alt="" style="display:none">
+      <div class="sp-no-img" id="spNoImg">🛍️</div>
+    </div>
+    <div class="sp-info">
+      <div class="sp-jan" id="spJan">―</div>
+      <div class="sp-name" id="spName">―</div>
+      <div class="sp-prices">
+        <div>
+          <div class="sp-price-label">通常売価</div>
+          <div class="sp-price" id="spPrice">―</div>
+        </div>
+        <div class="sp-sale-wrap" id="spSaleWrap" style="display:none">
+          <div>
+            <div class="sp-sale-label">特売</div>
+            <div class="sp-sale-price" id="spSalePrice">―</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <button class="btn-sp-close" onclick="closeStockPopup()">✕</button>
+  </div>
+
+  <!-- 数量入力 -->
+  <div class="sp-body">
+
+    <!-- 帳簿在庫 -->
+    <div class="qty-card">
+      <div class="qty-card-label"><span class="qty-card-label-icon">📒</span>帳簿在庫数</div>
+      <div class="qty-row">
+        <div class="qty-sub">システム上の在庫数</div>
+        <div class="qty-ctrl">
+          <button class="btn-qty" onclick="changeQty('book',-1)">−</button>
+          <div class="qty-val" id="qtyBook" contenteditable="true" inputmode="numeric" onblur="onQtyBlur('book',this)">0</div>
+          <button class="btn-qty" onclick="changeQty('book',1)">＋</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 実在庫 -->
+    <div class="qty-card" style="border-color:rgba(88,166,255,.3)">
+      <div class="qty-card-label" style="color:var(--blue)"><span class="qty-card-label-icon">🔍</span>実在庫数（カウント）</div>
+      <div class="qty-row">
+        <div class="qty-sub" id="diffLabel">差異：―</div>
+        <div class="qty-ctrl" style="border-color:rgba(88,166,255,.3)">
+          <button class="btn-qty" onclick="changeQty('actual',-1)">−</button>
+          <div class="qty-val" id="qtyActual" contenteditable="true" inputmode="numeric" onblur="onQtyBlur('actual',this)" style="color:var(--blue)">0</div>
+          <button class="btn-qty" onclick="changeQty('actual',1)">＋</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 発注数 -->
+    <div class="qty-card" style="border-color:rgba(63,185,80,.3)">
+      <div class="qty-card-label" style="color:var(--green)"><span class="qty-card-label-icon">📦</span>発注数</div>
+      <div class="qty-row">
+        <div class="qty-sub">今回発注する数量</div>
+        <div class="qty-ctrl" style="border-color:rgba(63,185,80,.3)">
+          <button class="btn-qty" onclick="changeQty('order',-1)">−</button>
+          <div class="qty-val" id="qtyOrder" contenteditable="true" inputmode="numeric" onblur="onQtyBlur('order',this)" style="color:var(--green)">0</div>
+          <button class="btn-qty" onclick="changeQty('order',1)">＋</button>
+        </div>
+      </div>
+      <div class="order-date-row">
+        <div class="order-date-label">納期</div>
+        <input type="date" class="order-date-input" id="orderDate">
+      </div>
+    </div>
+
+    <!-- 陳列数 -->
+    <div class="qty-card" style="border-color:rgba(188,140,255,.3)">
+      <div class="qty-card-label" style="color:var(--purple)"><span class="qty-card-label-icon">🏪</span>陳列数（固定フェイス数）</div>
+      <div class="qty-row">
+        <div class="qty-sub">棚の定番フェイス数</div>
+        <div class="qty-ctrl" style="border-color:rgba(188,140,255,.3)">
+          <button class="btn-qty" onclick="changeQty('display',-1)">−</button>
+          <div class="qty-val" id="qtyDisplay" contenteditable="true" inputmode="numeric" onblur="onQtyBlur('display',this)" style="color:var(--purple)">0</div>
+          <button class="btn-qty" onclick="changeQty('display',1)">＋</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="sp-footer">
+    <button class="btn-save-stock" onclick="saveStockEntry()">💾 保存してスキャンに戻る</button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════
+     PAGE 1: 棚卸一覧
+════════════════════════════════ -->
+<div class="page" id="pageList">
+  <div class="list-header">
+    <div>
+      <div class="list-title">棚卸一覧</div>
+      <div class="list-count" id="listCount">0件</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-csv" onclick="exportCSV()">📊 CSV</button>
+      <button class="btn-clear-all" onclick="clearAllInventory()">全消去</button>
+    </div>
+  </div>
+  <div class="inv-list" id="invList"></div>
+</div>
+
+<!-- ════════════════════════════════
+     PAGE 2: 商品マスタ
+════════════════════════════════ -->
+<div class="page" id="pageMaster">
+  <div class="master-header">
+    <div>
+      <div class="master-title">商品マスタ</div>
+      <div class="master-count" id="masterCount">0件</div>
+    </div>
+    <button class="btn-master-add" onclick="openMasterModal(null)">＋ 登録</button>
+  </div>
+  <div class="master-list" id="masterList"></div>
+</div>
+
+<!-- ════════════════════════════════
+     MASTER EDIT MODAL
+════════════════════════════════ -->
+<div id="masterModal">
+  <div class="mm-sheet">
+    <div class="mm-handle"></div>
+    <div class="mm-title" id="mmTitle">商品を登録する</div>
+
+    <input type="hidden" id="mmEditJan">
+
+    <!-- 画像 -->
+    <label class="mm-img-label" id="mmImgLabel">
+      <input type="file" class="mm-img-file" id="mmImgFile" accept="image/*" onchange="handleMasterImage(event)">
+      <img class="mm-img-preview" id="mmImgPreview" src="" alt="">
+      <div class="mm-img-overlay" id="mmImgOverlay">変更</div>
+      <div class="mm-img-icon" id="mmImgIcon">📷</div>
+      <div class="mm-img-txt" id="mmImgTxt">写真を選択</div>
+    </label>
+
+    <div class="mm-field">
+      <div class="mm-label">JANコード（13桁）</div>
+      <input type="text" class="mm-input" id="mmJan" placeholder="4901234567890" inputmode="numeric" maxlength="14">
+    </div>
+    <div class="mm-field">
+      <div class="mm-label">商品名</div>
+      <input type="text" class="mm-input" id="mmName" placeholder="例：〇〇ウォーター 500ml">
+    </div>
+    <div class="mm-row">
+      <div class="mm-field">
+        <div class="mm-label">通常売価（円）</div>
+        <input type="number" class="mm-input" id="mmPrice" placeholder="158" inputmode="numeric">
+      </div>
+      <div class="mm-field">
+        <div class="mm-label">特売価格（任意）</div>
+        <input type="number" class="mm-input" id="mmSale" placeholder="未設定" inputmode="numeric">
+      </div>
+    </div>
+    <button class="btn-mm-save" onclick="saveMaster()">登録する</button>
+    <button class="btn-mm-cancel" onclick="closeMasterModal()">キャンセル</button>
+  </div>
+</div>
+
+<!-- 未登録商品ポップアップ -->
+<div id="unknownPopup">
+  <div class="up-card">
+    <div class="up-icon">❓</div>
+    <div class="up-title">商品が見つかりません</div>
+    <div class="up-jan" id="upJan">―</div>
+    <button class="btn-up-register" onclick="registerFromUnknown()">このJANで商品を登録する</button>
+    <button class="btn-up-close" onclick="closeUnknownPopup()">閉じる</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+// ══════════════════════════════════════════════
+//  STORAGE
+// ══════════════════════════════════════════════
+const MKEY = 'handy_master_v1';   // 商品マスタ
+const IKEY = 'handy_inventory_v1'; // 棚卸データ
+
+function loadMaster(){ try{ return JSON.parse(localStorage.getItem(MKEY)||'[]'); }catch{ return []; } }
+function saveMaster_(a){ localStorage.setItem(MKEY, JSON.stringify(a)); }
+function getMasterByJan(jan){ return loadMaster().find(p=>p.jan===jan)||null; }
+
+function loadInventory(){ try{ return JSON.parse(localStorage.getItem(IKEY)||'[]'); }catch{ return []; } }
+function saveInventory(a){ localStorage.setItem(IKEY, JSON.stringify(a)); }
+
+// ══════════════════════════════════════════════
+//  TABS
+// ══════════════════════════════════════════════
+function showPage(id, tabIdx){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('show'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('show');
+  document.getElementById('tab'+tabIdx).classList.add('active');
+  if(id==='pageList')   renderInventory();
+  if(id==='pageMaster') renderMaster();
+  if(id==='pageScan' && !scanning) startCamera();
+}
+
+// ══════════════════════════════════════════════
+//  CAMERA & BARCODE SCAN
+// ══════════════════════════════════════════════
+let scanning = false;
+let lastCode = ''; let lastCodeTime = 0;
+
+async function startCamera(){
+  if(scanning) return;
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'environment', width:{ideal:1920}, height:{ideal:1080}}, audio:false
+    });
+    const v = document.getElementById('video');
+    v.srcObject = stream;
+    v.onloadedmetadata = ()=>{
+      v.play();
+      document.getElementById('camStart').style.display = 'none';
+      document.getElementById('scanUI').style.display   = 'flex';
+      scanning = true;
+      scanLoop();
+    };
+  }catch(e){
+    document.getElementById('camStart').querySelector('.cs-sub').textContent =
+      'カメラへのアクセスが拒否されました。\nSafariの設定でカメラをONにしてください。';
+  }
+}
+
+function scanLoop(){
+  const video  = document.getElementById('video');
+  const canvas = document.getElementById('scanCanvas');
+  const ctx    = canvas.getContext('2d');
+
+  function tick(){
+    if(!scanning){ requestAnimationFrame(tick); return; }
+    if(video.readyState !== video.HAVE_ENOUGH_DATA){ requestAnimationFrame(tick); return; }
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0);
+
+    if(typeof jsQR !== 'undefined'){
+      const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // jsQRはQRのみ。バーコードはZXing等が必要だが、
+      // デモ用途でJANコードをQRコードで代用するか、
+      // BarcodeDetector APIを使用
+      const qr = jsQR(d.data, d.width, d.height, {inversionAttempts:'dontInvert'});
+      if(qr) handleCode(qr.data);
+    }
+
+    // BarcodeDetector API（iOS16.4以降 / Chrome対応）
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // BarcodeDetectorをjsQRと並行して動かす
+  startBarcodeDetector();
+}
+
+let bdRunning = false;
+async function startBarcodeDetector(){
+  if(bdRunning) return;
+  if(!('BarcodeDetector' in window)) return;
+  bdRunning = true;
+  const video = document.getElementById('video');
+  try{
+    const bd = new BarcodeDetector({formats:['ean_13','ean_8','qr_code','code_128']});
+    async function detect(){
+      if(!scanning){ bdRunning=false; return; }
+      try{
+        const codes = await bd.detect(video);
+        for(const c of codes) handleCode(c.rawValue);
+      }catch{}
+      requestAnimationFrame(detect);
+    }
+    detect();
+  }catch{ bdRunning=false; }
+}
+
+function handleCode(code){
+  const now = Date.now();
+  if(code === lastCode && now - lastCodeTime < 2500) return;
+  lastCode = code; lastCodeTime = now;
+
+  // JANコード判定（8桁 or 13桁の数字）
+  const isJAN = /^\d{8}$|^\d{13}$/.test(code);
+  const isQR  = !isJAN;
+
+  if(isJAN || isQR){
+    const jan = isJAN ? code : code; // QRに埋め込んだJANもそのまま使う
+    openStockPopup(jan);
+  }
+}
+
+// ══════════════════════════════════════════════
+//  STOCK POPUP
+// ══════════════════════════════════════════════
+let currentJAN = '';
+let stockQty   = {book:0, actual:0, order:0, display:0};
+
+function openStockPopup(jan){
+  currentJAN = jan;
+  const prod = getMasterByJan(jan);
+
+  if(!prod){
+    // 未登録商品
+    document.getElementById('upJan').textContent = jan;
+    document.getElementById('unknownPopup').classList.add('show');
+    return;
+  }
+
+  // 商品情報セット
+  const img = document.getElementById('spImg');
+  const ph  = document.getElementById('spNoImg');
+  if(prod.image){ img.src=prod.image; img.style.display='block'; ph.style.display='none'; }
+  else { img.style.display='none'; ph.style.display='flex'; }
+
+  document.getElementById('spJan').textContent  = jan;
+  document.getElementById('spName').textContent = prod.name;
+  document.getElementById('spPrice').textContent = prod.price ? `¥${Number(prod.price).toLocaleString()}` : '未設定';
+
+  const saleWrap = document.getElementById('spSaleWrap');
+  if(prod.sale){
+    document.getElementById('spSalePrice').textContent = `¥${Number(prod.sale).toLocaleString()}`;
+    saleWrap.style.display = 'flex';
+  } else {
+    saleWrap.style.display = 'none';
+  }
+
+  // 既存の棚卸データを読み込む
+  const inv = loadInventory().find(i=>i.jan===jan);
+  stockQty = inv
+    ? {book:inv.book||0, actual:inv.actual||0, order:inv.order||0, display:inv.display||0}
+    : {book:0, actual:0, order:0, display:0};
+
+  // 今日の日付をデフォルトに
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm   = String(today.getMonth()+1).padStart(2,'0');
+  const dd   = String(today.getDate()+1).padStart(2,'0'); // 翌日を納期デフォルト
+  document.getElementById('orderDate').value = inv?.orderDate || `${yyyy}-${mm}-${dd}`;
+
+  renderQty();
+  updateDiffLabel();
+
+  // ラストスキャンバー更新
+  document.getElementById('lsbJan').textContent  = jan;
+  document.getElementById('lsbName').textContent = prod.name;
+  document.getElementById('lastScanBar').style.display = 'flex';
+
+  document.getElementById('stockPopup').style.display = 'flex';
+}
+
+function closeStockPopup(){
+  document.getElementById('stockPopup').style.display = 'none';
+}
+
+function reopenLastScan(){
+  if(currentJAN) openStockPopup(currentJAN);
+}
+
+function renderQty(){
+  ['book','actual','order','display'].forEach(k=>{
+    document.getElementById('qty'+k.charAt(0).toUpperCase()+k.slice(1)).textContent = stockQty[k];
+  });
+  updateDiffLabel();
+}
+
+function changeQty(key, delta){
+  stockQty[key] = Math.max(0, (stockQty[key]||0) + delta);
+  const id = 'qty'+key.charAt(0).toUpperCase()+key.slice(1);
+  document.getElementById(id).textContent = stockQty[key];
+  updateDiffLabel();
+}
+
+function onQtyBlur(key, el){
+  const v = parseInt(el.textContent)||0;
+  stockQty[key] = Math.max(0, v);
+  el.textContent = stockQty[key];
+  updateDiffLabel();
+}
+
+function updateDiffLabel(){
+  const diff = stockQty.actual - stockQty.book;
+  const label = document.getElementById('diffLabel');
+  if(diff===0) label.textContent='差異：なし';
+  else if(diff>0) label.innerHTML=`<span style="color:var(--green)">差異：+${diff}（過剰）</span>`;
+  else label.innerHTML=`<span style="color:var(--accent2)">差異：${diff}（不足）</span>`;
+}
+
+function saveStockEntry(){
+  const inv = loadInventory();
+  const orderDate = document.getElementById('orderDate').value;
+  const idx = inv.findIndex(i=>i.jan===currentJAN);
+  const prod = getMasterByJan(currentJAN);
+  const entry = {
+    jan:currentJAN,
+    name: prod?.name||'不明',
+    book:stockQty.book,
+    actual:stockQty.actual,
+    order:stockQty.order,
+    display:stockQty.display,
+    orderDate,
+    savedAt: new Date().toISOString()
+  };
+  if(idx!==-1) inv[idx]=entry;
+  else inv.push(entry);
+  saveInventory(inv);
+  closeStockPopup();
+  toast('保存しました ✓');
+}
+
+// ══════════════════════════════════════════════
+//  UNKNOWN POPUP
+// ══════════════════════════════════════════════
+function closeUnknownPopup(){ document.getElementById('unknownPopup').classList.remove('show'); }
+function registerFromUnknown(){
+  const jan = document.getElementById('upJan').textContent;
+  closeUnknownPopup();
+  openMasterModal(null, jan);
+  showPage('pageMaster', 2);
+}
+
+// ══════════════════════════════════════════════
+//  INVENTORY LIST
+// ══════════════════════════════════════════════
+function renderInventory(){
+  const inv = loadInventory();
+  document.getElementById('listCount').textContent = `${inv.length}件`;
+  const el = document.getElementById('invList');
+
+  if(!inv.length){
+    el.innerHTML=`<div class="empty-list"><div class="empty-list-icon">📋</div><div class="empty-list-txt">棚卸データがまだありません<br>スキャンして在庫を入力してください</div></div>`;
+    return;
+  }
+
+  el.innerHTML = inv.slice().reverse().map(i=>{
+    const prod = getMasterByJan(i.jan);
+    const diff = (i.actual||0) - (i.book||0);
+    const diffCls = diff<0?'diff-minus':diff>0?'diff-plus':'';
+    const t = new Date(i.savedAt);
+    const timeStr = `${t.getMonth()+1}/${t.getDate()} ${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')}`;
+    return `
+    <div class="inv-card">
+      <div class="inv-card-top">
+        <div class="inv-thumb">${prod?.image?`<img src="${prod.image}" alt="">`:'🛍️'}</div>
+        <div class="inv-info">
+          <div class="inv-name">${esc(i.name)}</div>
+          <div class="inv-jan">${i.jan}</div>
+          <div class="inv-time">${timeStr}${i.orderDate?'　納期:'+i.orderDate:''}</div>
+        </div>
+        <button class="btn-inv-edit" onclick="openStockPopup('${i.jan}');showPage('pageScan',0)">編集</button>
+      </div>
+      <div class="inv-nums">
+        <div class="inv-num-cell"><div class="inv-num-label">帳簿</div><div class="inv-num-val">${i.book||0}</div></div>
+        <div class="inv-num-cell"><div class="inv-num-label">実在庫</div><div class="inv-num-val ${diffCls}">${i.actual||0}</div></div>
+        <div class="inv-num-cell"><div class="inv-num-label">発注</div><div class="inv-num-val" style="color:var(--green)">${i.order||0}</div></div>
+        <div class="inv-num-cell"><div class="inv-num-label">陳列</div><div class="inv-num-val" style="color:var(--purple)">${i.display||0}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function clearAllInventory(){
+  if(!confirm('棚卸データをすべて消去しますか？')) return;
+  saveInventory([]);
+  renderInventory();
+  toast('消去しました');
+}
+
+function exportCSV(){
+  const inv = loadInventory();
+  if(!inv.length){ toast('データがありません'); return; }
+  const header = 'JANコード,商品名,帳簿在庫,実在庫,差異,発注数,納期,陳列数,記録日時';
+  const rows = inv.map(i=>[
+    i.jan, `"${i.name}"`,
+    i.book||0, i.actual||0,
+    (i.actual||0)-(i.book||0),
+    i.order||0, i.orderDate||'',
+    i.display||0, i.savedAt
+  ].join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+header+'\n'+rows], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `棚卸_${new Date().toLocaleDateString('ja')}.csv`;
+  a.click();
+}
+
+// ══════════════════════════════════════════════
+//  MASTER MODAL
+// ══════════════════════════════════════════════
+let masterImageData = null;
+
+function openMasterModal(prod, prefillJan=''){
+  masterImageData = prod ? (prod.image||null) : null;
+
+  document.getElementById('mmTitle').textContent  = prod ? '商品を編集する' : '商品を登録する';
+  document.getElementById('mmEditJan').value = prod ? prod.jan : '';
+  document.getElementById('mmJan').value    = prod ? prod.jan  : prefillJan;
+  document.getElementById('mmName').value   = prod ? prod.name : '';
+  document.getElementById('mmPrice').value  = prod ? prod.price: '';
+  document.getElementById('mmSale').value   = prod ? (prod.sale||'') : '';
+
+  setMasterPreview(masterImageData);
+  replaceMasterFileInput();
+  document.getElementById('masterModal').classList.add('show');
+}
+
+function closeMasterModal(){ document.getElementById('masterModal').classList.remove('show'); }
+
+function setMasterPreview(dataUrl){
+  const preview = document.getElementById('mmImgPreview');
+  const overlay = document.getElementById('mmImgOverlay');
+  const icon    = document.getElementById('mmImgIcon');
+  const txt     = document.getElementById('mmImgTxt');
+  if(dataUrl){
+    preview.src=dataUrl; preview.style.display='block';
+    overlay.style.display='flex'; icon.style.display='none'; txt.style.display='none';
+  } else {
+    preview.src=''; preview.style.display='none';
+    overlay.style.display='none'; icon.style.display=''; txt.style.display='';
+  }
+}
+
+function handleMasterImage(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    const img = new Image();
+    img.onload = function(){
+      const MAX=800; let w=img.width, h=img.height;
+      if(w>MAX||h>MAX){ if(w>h){h=Math.round(h*MAX/w);w=MAX;}else{w=Math.round(w*MAX/h);h=MAX;} }
+      const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      masterImageData=c.toDataURL('image/jpeg',.85);
+      setMasterPreview(masterImageData);
+    };
+    img.src=ev.target.result;
+  };
+  reader.readAsDataURL(file);
+  replaceMasterFileInput();
+}
+
+function replaceMasterFileInput(){
+  const old=document.getElementById('mmImgFile');
+  if(!old) return;
+  const neo=document.createElement('input');
+  neo.type='file'; neo.accept='image/*'; neo.className='mm-img-file'; neo.id='mmImgFile';
+  neo.onchange=handleMasterImage;
+  old.parentNode.replaceChild(neo, old);
+}
+
+function saveMaster(){
+  const jan   = document.getElementById('mmJan').value.trim();
+  const name  = document.getElementById('mmName').value.trim();
+  const price = document.getElementById('mmPrice').value.trim();
+  const sale  = document.getElementById('mmSale').value.trim();
+  const editJan = document.getElementById('mmEditJan').value;
+
+  if(!jan)  { toast('JANコードを入力してください'); return; }
+  if(!/^\d{8}$|^\d{13}$/.test(jan)){ toast('JANは8桁または13桁の数字です'); return; }
+  if(!name) { toast('商品名を入力してください'); return; }
+  if(!price){ toast('売価を入力してください'); return; }
+
+  const master = loadMaster();
+  if(editJan){
+    const idx = master.findIndex(p=>p.jan===editJan);
+    if(idx!==-1){
+      master[idx]={jan,name,price,sale:sale||null,image:masterImageData||master[idx].image};
+      saveMaster_(master); toast('更新しました ✓');
+    }
+  } else {
+    if(master.find(p=>p.jan===jan)){ toast('このJANはすでに登録されています'); return; }
+    master.push({jan,name,price,sale:sale||null,image:masterImageData||null});
+    saveMaster_(master); toast('登録しました ✓');
+  }
+  masterImageData=null;
+  closeMasterModal();
+  renderMaster();
+}
+
+// ══════════════════════════════════════════════
+//  MASTER LIST
+// ══════════════════════════════════════════════
+function renderMaster(){
+  const master = loadMaster();
+  document.getElementById('masterCount').textContent = `${master.length}件`;
+  const el = document.getElementById('masterList');
+  if(!master.length){
+    el.innerHTML=`<div class="master-empty"><div class="master-empty-icon">📦</div><div class="master-empty-txt">商品マスタが空です<br>「＋ 登録」から追加してください</div></div>`;
+    return;
+  }
+  el.innerHTML=master.slice().reverse().map(p=>`
+    <div class="master-card">
+      <div class="master-thumb">${p.image?`<img src="${p.image}" alt="">`:'🛍️'}</div>
+      <div class="master-info">
+        <div class="master-name">${esc(p.name)}</div>
+        <div class="master-jan">${p.jan}</div>
+        <div class="master-prices">
+          <span class="master-price">¥${Number(p.price).toLocaleString()}</span>
+          ${p.sale?`<span class="master-sale">特売¥${Number(p.sale).toLocaleString()}</span>`:''}
+        </div>
+      </div>
+      <div class="master-btns">
+        <button class="btn-m-edit" onclick='openMasterModal(${JSON.stringify(p)})'>編集</button>
+        <button class="btn-m-del"  onclick="deleteMaster('${p.jan}')">削除</button>
+      </div>
+    </div>`).join('');
+}
+
+function deleteMaster(jan){
+  if(!confirm('この商品を削除しますか？')) return;
+  saveMaster_(loadMaster().filter(p=>p.jan!==jan));
+  renderMaster(); toast('削除しました');
+}
+
+// ══════════════════════════════════════════════
+//  UTILS
+// ══════════════════════════════════════════════
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function toast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>el.classList.remove('show'),2500);
+}
+
+// ══════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded',()=>{
+  startCamera();
+
+  // デモ用サンプルデータ（初回のみ）
+  if(!loadMaster().length){
+    saveMaster_([
+      {jan:'4901085184981',name:'コカ・コーラ 500ml',price:'162',sale:'138',image:null},
+      {jan:'4901085616093',name:'綾鷹 525ml',price:'151',sale:null,image:null},
+      {jan:'4901085678886',name:'爽健美茶 600ml',price:'151',sale:'129',image:null},
+    ]);
+  }
+});
+</script>
+</body>
+</html>
