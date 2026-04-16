@@ -309,6 +309,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;
   opacity:0;transition:all .3s;z-index:999;white-space:nowrap;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 </style>
+<!-- LIFF SDK -->
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
 
@@ -508,8 +510,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;
 
 <div class="toast" id="toast"></div>
 
-<!-- ZXing: iPhoneでJAN/EAN読める唯一の現実的ライブラリ -->
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
+<!-- バーコード読み取り: LIFF scanCodeV2（メイン）+ BarcodeDetector（フォールバック）-->
 
 <script>
 'use strict';
@@ -564,100 +565,180 @@ function tab(n) {
 }
 
 // ════════════════════════════════
-//  カメラ起動（完全シンプル版）
+//  LIFF初期化 & バーコードスキャン
+//
+//  LIFF ID: 2009811284-2WFSylWo
+//
+//  動作フロー：
+//  LINEアプリで開く → LIFF初期化 →
+//  スキャンボタン → liff.scanCodeV2() →
+//  LINEネイティブカメラでバーコード読取 →
+//  結果をJSに返す → 商品ポップアップ表示
 // ════════════════════════════════
-let cameraOn  = false;
-let zxReader  = null;
-let scanTimer = null;
+const LIFF_ID = '2009811284-2WFSylWo';
+let liffReady = false;
+let isInLiff  = false;
 let lastCode  = '';
 let lastTime  = 0;
+let cameraOn  = false; // videoプレビュー用
 
+// ── LIFF初期化（ページ読み込み時） ──
+async function initLiff() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    liffReady = true;
+    isInLiff  = liff.isInClient(); // LINEアプリ内で開いているか
+
+    if (isInLiff) {
+      // LINEアプリ内：カメラ起動ボタンの文言を変える
+      const btn = document.querySelector('.btn-cs');
+      if (btn) btn.textContent = '📷 バーコードをスキャン';
+      const sub = document.querySelector('.cs-sub');
+      if (sub) sub.textContent = 'ボタンを押してバーコードを
+カメラで読み取ってください';
+    }
+  } catch(e) {
+    console.warn('LIFF初期化失敗:', e.message);
+    // LIFF外（Safari直アクセス等）でも動くようにする
+    liffReady = false;
+  }
+}
+
+// ── スキャン開始（ボタン押下時） ──
 async function startCamera() {
+  if (isInLiff && liffReady) {
+    // LINEアプリ内：liff.scanCodeV2()でネイティブスキャン
+    await scanWithLiff();
+  } else {
+    // LINE外（Safari等）：カメラプレビュー + 手動入力
+    await startCameraPreview();
+  }
+}
+
+// ── LIFF スキャン ──
+async function scanWithLiff() {
+  try {
+    const result = await liff.scanCodeV2();
+    if (result && result.value) {
+      onCode(result.value);
+      // 連続スキャンのため再度スキャン画面に戻す
+      setTimeout(showScanReady, 500);
+    }
+  } catch(e) {
+    if (e.code === 'FORBIDDEN') {
+      toast('スキャンがキャンセルされました');
+    } else {
+      console.error('スキャンエラー:', e);
+      toast('スキャンに失敗しました。もう一度お試しください');
+    }
+  }
+}
+
+// スキャン待機状態の表示
+function showScanReady() {
+  const camStart  = document.getElementById('camStart');
+  const scanLayer = document.getElementById('scanLayer');
+  const video     = document.getElementById('video');
+  camStart.style.display  = 'flex';
+  scanLayer.style.display = 'none';
+  video.style.display     = 'none';
+}
+
+// ── カメラプレビュー（LINE外フォールバック） ──
+async function startCameraPreview() {
   const video    = document.getElementById('video');
   const camStart = document.getElementById('camStart');
   const scanLayer= document.getElementById('scanLayer');
 
   try {
-    // ① カメラストリーム取得
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment' },
-      audio: false
+      video: { facingMode: 'environment' }, audio: false
     });
-
-    // ② videoにストリームをセット
     video.srcObject = stream;
-
-    // ③ loadedmetadataを待ってからplay
     await new Promise((resolve, reject) => {
       video.onloadedmetadata = resolve;
       video.onerror = reject;
-      setTimeout(reject, 8000); // タイムアウト
+      setTimeout(reject, 8000);
     });
-
     await video.play();
 
-    // ④ 表示切り替え
-    camStart.style.display = 'none';
-    video.style.display    = 'block';
-    scanLayer.style.display= 'flex';
+    camStart.style.display  = 'none';
+    video.style.display     = 'block';
+    scanLayer.style.display = 'flex';
     cameraOn = true;
 
-    // ⑤ ZXing初期化
-    if (typeof ZXing !== 'undefined') {
-      const hints = new Map();
-      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-        ZXing.BarcodeFormat.EAN_13,
-        ZXing.BarcodeFormat.EAN_8,
-        ZXing.BarcodeFormat.CODE_128,
-        ZXing.BarcodeFormat.QR_CODE,
-      ]);
-      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-      zxReader = new ZXing.BrowserMultiFormatReader(hints);
+    // BarcodeDetector（Chrome/Android）
+    if (typeof BarcodeDetector !== 'undefined') {
+      startBD(video);
+    } else {
+      showManualInput();
     }
-
-    // ⑥ スキャンループ開始
-    scheduleScan();
-
   } catch(e) {
-    console.error('カメラエラー:', e.name, e.message);
     camStart.style.display = 'flex';
     video.style.display    = 'none';
     camStart.querySelector('.cs-sub').textContent =
-      e.name === 'NotAllowedError'
-        ? '⚠️ カメラが許可されていません\nSafari設定 → このサイト → カメラ → 許可'
-        : `⚠️ カメラ起動失敗 (${e.name})\nページを再読み込みしてください`;
+      'LINEアプリで開くとバーコードを
+自動スキャンできます。
+
+' +
+      (e.name === 'NotAllowedError'
+        ? 'カメラ許可が必要です（Safari設定）'
+        : 'カメラを起動できませんでした');
   }
 }
 
-// ════════════════════════════════
-//  スキャンループ
-// ════════════════════════════════
-function scheduleScan() {
-  if (!cameraOn || !zxReader) return;
-  scanTimer = setTimeout(doScan, 200);
+// BarcodeDetector（Chrome/Android用）
+async function startBD(video) {
+  const bd = new BarcodeDetector({ formats:['ean_13','ean_8','code_128','qr_code'] });
+  async function detect() {
+    if (!cameraOn) return;
+    try {
+      const codes = await bd.detect(video);
+      for (const c of codes) onCode(c.rawValue);
+    } catch {}
+    requestAnimationFrame(detect);
+  }
+  detect();
 }
 
-function doScan() {
-  if (!cameraOn || !zxReader) return;
-  const video = document.getElementById('video');
-  if (video.readyState < 2 || video.videoWidth === 0) {
-    scheduleScan();
-    return;
-  }
-  try {
-    const result = zxReader.decodeFromVideoElement(video);
-    if (result) onCode(result.getText());
-  } catch(e) {
-    // NotFoundException: バーコードなし → 正常
-  }
-  scheduleScan();
+// 手動入力（iOS Safari用フォールバック）
+function showManualInput() {
+  const sl = document.getElementById('scanLayer');
+  if (document.getElementById('manualArea')) return;
+  const div = document.createElement('div');
+  div.id = 'manualArea';
+  div.style.cssText = 'margin-top:20px;display:flex;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:100%;padding:0 24px';
+  div.innerHTML = `
+    <div style="font-size:12px;color:rgba(255,255,255,.65);text-align:center;line-height:1.7">
+      ⚠️ iOSではカメラでの自動読み取りが困難です<br>
+      <strong style="color:var(--accent)">LINEアプリで開くと自動スキャンできます</strong>
+    </div>
+    <div style="display:flex;gap:8px;width:100%;max-width:320px">
+      <input id="janInp" type="text" inputmode="numeric" placeholder="JANコード（13桁）"
+        style="flex:1;background:rgba(0,0,0,.65);border:1.5px solid rgba(247,129,102,.5);
+          border-radius:10px;padding:12px 14px;color:#fff;font-size:16px;
+          font-family:monospace;outline:none;-webkit-appearance:none;width:100%"
+        onkeydown="if(event.key==='Enter')submitJan()">
+      <button onclick="submitJan()"
+        style="background:var(--accent);border:none;border-radius:10px;padding:12px 16px;
+          color:#fff;font-size:14px;font-weight:800;font-family:inherit;
+          cursor:pointer;flex-shrink:0">検索</button>
+    </div>
+  `;
+  sl.appendChild(div);
+}
+
+function submitJan() {
+  const inp = document.getElementById('janInp');
+  if (!inp) return;
+  const val = inp.value.trim();
+  if (val) { onCode(val); inp.value = ''; }
 }
 
 function onCode(code) {
   const now = Date.now();
   if (code === lastCode && now - lastTime < 2500) return;
-  lastCode = code;
-  lastTime = now;
+  lastCode = code; lastTime = now;
   if (navigator.vibrate) navigator.vibrate(60);
   openStock(code);
 }
@@ -959,6 +1040,9 @@ function toast(msg) {
 //  INIT
 // ════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
+  // LIFF初期化（LINEアプリ内でもSafariでも実行）
+  initLiff();
+
   // デモ用サンプルデータ（初回のみ）
   if (!lm().length) {
     sm([
